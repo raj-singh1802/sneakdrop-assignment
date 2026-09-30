@@ -1,0 +1,26 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: sneaker
+      POSTGRES_PASSWORD: sneaker
+      POSTGRES_DB: sneakerdrop
+    volumes:
+      - ./src/sql/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sneaker -d sneakerdrop"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5432:5432"
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://sneaker:sneaker@db:5432/sneakerdrop
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
