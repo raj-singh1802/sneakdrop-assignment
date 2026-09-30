@@ -12,16 +12,19 @@ def hdr(uid):
     return {"X-User-Id": str(uid)}
 
 
-async def buy(client, uid, sem):
+async def buy(client, uid, sem, retries=2):
     async with sem:
-        try:
-            r = await client.post("/buy", headers=hdr(uid))
+        for attempt in range(retries + 1):
             try:
-                return r.json().get("result", f"HTTP_{r.status_code}")
-            except Exception:
-                return f"HTTP_{r.status_code}"
-        except Exception as e:
-            return f"ERR_{type(e).__name__}"
+                r = await client.post("/buy", headers=hdr(uid))
+                try:
+                    return r.json().get("result", f"HTTP_{r.status_code}")
+                except Exception:
+                    return f"HTTP_{r.status_code}"
+            except httpx.TransportError as e:
+                if attempt == retries:
+                    return f"ERR_{type(e).__name__}"
+                await asyncio.sleep(0.2)
 
 
 async def join(client, uid, sem):
@@ -50,7 +53,10 @@ async def main(n):
         s = (await c.get("/stock")).json()
         print(f"[A] {n} users, one click each: {dict(res)}")
         print(f"[A] stock: {s}")
-        a_ok = res["HELD"] == 20 and s["held"] == 20 and s["available"] == 0
+        holders = res["HELD"] + res["ALREADY_HOLDING"]  # ALREADY_HOLDING only appears if a retry follows an attempt that did succeed
+        errors = sum(v for k, v in res.items() if k.startswith(("ERR_", "HTTP_")))
+        a_ok = (holders == 20 and res["SOLD_OUT"] == n - 20 and errors == 0
+                and s["held"] == 20 and s["available"] == 0)
         print("[A]", "PASS" if a_ok else "FAIL")
         ok = ok and a_ok
 

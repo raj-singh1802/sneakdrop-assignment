@@ -41,11 +41,29 @@ CREATE UNIQUE INDEX one_wait_per_user
   ON waitlist(user_id) WHERE status = 'WAITING';
 CREATE INDEX waitlist_queue ON waitlist(id) WHERE status = 'WAITING';
 
-CREATE TABLE payment_events (
-  event_id       TEXT PRIMARY KEY,          -- dedupe key
+CREATE TABLE payments (
+  id             TEXT PRIMARY KEY,            -- our reference, echoed by the provider
   reservation_id BIGINT NOT NULL REFERENCES reservations(id),
-  type           TEXT NOT NULL,
-  seq            INT,
-  received_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  outcome        TEXT
+  user_id        INT NOT NULL REFERENCES users(id),
+  status         TEXT NOT NULL CHECK (status IN ('PENDING','SUCCEEDED','FAILED')),
+  amount_cents   INT NOT NULL,
+  last_seq       INT NOT NULL DEFAULT 0,      -- highest event seq applied
+  refund_needed  BOOLEAN NOT NULL DEFAULT false,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  settled_at     TIMESTAMPTZ
+);
+-- DB-level guarantees: one in-flight payment per reservation, one success per reservation
+CREATE UNIQUE INDEX one_pending_payment_per_reservation
+  ON payments(reservation_id) WHERE status = 'PENDING';
+CREATE UNIQUE INDEX one_success_per_reservation
+  ON payments(reservation_id) WHERE status = 'SUCCEEDED';
+CREATE INDEX payments_reservation ON payments(reservation_id);
+
+CREATE TABLE payment_events (
+  event_id    TEXT PRIMARY KEY,               -- dedupe key
+  payment_id  TEXT NOT NULL REFERENCES payments(id),
+  type        TEXT NOT NULL,
+  seq         INT NOT NULL,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  outcome     TEXT NOT NULL                   -- audit trail: what we did with it
 );

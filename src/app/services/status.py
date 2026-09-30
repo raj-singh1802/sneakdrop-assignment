@@ -9,7 +9,7 @@ def user_status(user_id: int):
     with pool.connection() as conn:
         if conn.execute("SELECT 1 FROM users WHERE id = %s", (user_id,)).fetchone() is None:
             return None
-        hold_id, expires_at, secs, position, paid = conn.execute(
+        hold_id, expires_at, secs, position, paid, pay_status = conn.execute(
             """
             WITH h AS (
               SELECT id, expires_at,
@@ -21,11 +21,17 @@ def user_status(user_id: int):
                WHERE status = 'WAITING'
                  AND id <= (SELECT id FROM waitlist
                              WHERE user_id = %(u)s AND status = 'WAITING')
+            ), p AS (
+              SELECT py.status FROM payments py
+                JOIN reservations r ON r.id = py.reservation_id
+               WHERE r.user_id = %(u)s AND r.status = 'HELD'
+               ORDER BY py.created_at DESC LIMIT 1
             )
             SELECT (SELECT id FROM h), (SELECT expires_at FROM h), (SELECT secs FROM h),
                    (SELECT pos FROM w),
                    (SELECT count(*) FROM reservations
-                     WHERE user_id = %(u)s AND status = 'PAID')
+                     WHERE user_id = %(u)s AND status = 'PAID'),
+                   (SELECT status FROM p)
             """,
             {"u": user_id},
         ).fetchone()
@@ -39,6 +45,7 @@ def user_status(user_id: int):
             "expires_at": expires_at.isoformat(),
             "seconds_left": max(0, math.ceil(float(secs))),
         } if hold_id else None,
+        "payment_status": pay_status if hold_id else None,  # PENDING / FAILED / None
         "queue_position": position or None,
         "paid": paid,
         "stock": stock,
