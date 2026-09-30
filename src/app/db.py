@@ -5,5 +5,6 @@ pool = ConnectionPool(
     os.environ["DATABASE_URL"],
     min_size=5,
     max_size=20,
+    timeout=60,
     open=False,
 )

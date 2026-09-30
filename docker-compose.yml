@@ -19,6 +19,7 @@ services:
     build: .
     environment:
       DATABASE_URL: postgresql://sneaker:sneaker@db:5432/sneakerdrop
+      ENABLE_ADMIN: "1"
     depends_on:
       db:
         condition: service_healthy
