@@ -107,7 +107,7 @@ async def main(n):
         print("[C]", "PASS" if c_ok else "FAIL")
         ok = ok and c_ok
 
-        await reset(c, stock=20)  # back to 20 pairs / 300s
+        await reset(c, total_stock=20)  # back to 20 pairs / 300s
         sys.exit(0 if ok else 1)
 
 
