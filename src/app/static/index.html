@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sneaker Drop</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #121212;
+    --card-bg: #1e1e1e;
+    --text: #ffffff;
+    --text-muted: #a0a0a0;
+    --accent: #ff4757;
+    --accent-hover: #ff6b81;
+    --border: #333333;
+    --input-bg: #2a2a2a;
+  }
+  body {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--bg);
+    color: var(--text);
+    max-width: 760px;
+    margin: 2em auto;
+    padding: 2em;
+    line-height: 1.5;
+  }
+  h2 {
+    font-weight: 600;
+    font-size: 2.2em;
+    margin-bottom: 1em;
+    background: linear-gradient(90deg, #ff4757, #ffa502);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  pre {
+    background: var(--card-bg);
+    padding: 1.2em;
+    white-space: pre-wrap;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    font-family: monospace;
+    font-size: 0.95em;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  }
+  button {
+    background-color: var(--accent);
+    color: white;
+    border: none;
+    padding: 0.6em 1.2em;
+    margin: 0 0.5em 0.5em 0;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(255, 71, 87, 0.3);
+  }
+  button:hover {
+    background-color: var(--accent-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 71, 87, 0.5);
+  }
+  input, select {
+    background-color: var(--input-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 0.4em 0.8em;
+    border-radius: 6px;
+    font-family: inherit;
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  fieldset {
+    margin-top: 2em;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5em;
+    background: var(--card-bg);
+  }
+  legend {
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 0 0.5em;
+  }
+</style>
+</head>
+<body>
+<h2>Sneaker Drop</h2>
+
+<p>
+  User id: <input id="uid" type="number" min="1" max="5000" value="1" style="width:6em">
+  (seeded users 1-5000, or open <code>/?user=7</code>)
+</p>
+
+<pre id="view">loading...</pre>
+
+<p>
+  <button id="buy">Buy</button>
+  <button id="pay">Pay</button>
+  <button id="join">Join waitlist</button>
+  <button id="leave">Leave waitlist</button>
+</p>
+
+<p>
+  Fake payment behaviour (demo):
+  <select id="scenario">
+    <option value="random">random (late / duplicate / reordered)</option>
+    <option value="clean">clean</option>
+    <option value="duplicate">duplicate</option>
+    <option value="reordered">reordered</option>
+    <option value="late">late (10s)</option>
+    <option value="fail">fail</option>
+  </select>
+</p>
+
+<pre id="msg">Last action: none</pre>
+
+<fieldset>
+  <legend>Demo controls (need ENABLE_ADMIN=1)</legend>
+  Pairs: <input id="rs" type="number" value="20" style="width:5em">
+  Hold seconds: <input id="rh" type="number" value="300" style="width:5em">
+  <button id="reset">Reset sale</button>
+</fieldset>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let last = null;          // last /status response
+let holdDeadline = null;  // local performance.now() value when the hold ends
+
+$("uid").value = new URLSearchParams(location.search).get("user") || "1";
+const uid = () => String(parseInt($("uid").value, 10) || 1);
+const hdr = () => ({ "X-User-Id": uid() });
+
+function fmt(sec) {
+  sec = Math.max(0, Math.ceil(sec));
+  return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+}
+
+function render() {
+  if (!last) return;
+  const k = last.stock;
+  const lines = [
+    `Pairs left: ${k.available} of ${k.total}   (on hold: ${k.held}, sold: ${k.paid})`,
+    "",
+    `You are user ${uid()}`,
+  ];
+  if (last.state === "HOLDING") {
+    lines.push(`Hold: 1 pair reserved for you, ${fmt((holdDeadline - performance.now()) / 1000)} left`);
+    lines.push(`Payment: ${last.payment_status || "not started"}`);
+  } else if (last.state === "WAITING") {
+    lines.push(`Waiting line: you are #${last.queue_position}`);
+  } else {
+    lines.push("No hold, not in the waiting line");
+  }
+  lines.push(`Pairs you bought: ${last.paid}`);
+  $("view").textContent = lines.join("\n");
+}
+
+async function poll() {
+  const u = uid();
+  try {
+    const r = await fetch("/status", { headers: hdr() });
+    if (u !== uid()) return;  // user switched while the request was in flight
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    last = await r.json();
+    holdDeadline = last.hold ? performance.now() + last.hold.seconds_left * 1000 : null;
+    render();
+  } catch (e) {
+    last = null;
+    $("view").textContent = "Cannot load status: " + e.message;
+  }
+}
+
+async function act(path, params) {
+  const qs = params ? "?" + new URLSearchParams(params) : "";
+  try {
+    const r = await fetch(path + qs, { method: "POST", headers: hdr() });
+    let body = {};
+    try { body = await r.json(); } catch (e) {}
+    $("msg").textContent = `POST ${path} -> HTTP ${r.status}\n` + JSON.stringify(body, null, 2);
+  } catch (e) {
+    $("msg").textContent = `POST ${path} failed: ${e.message}`;
+  }
+  poll();
+}
+
+$("buy").onclick = () => act("/buy");
+$("pay").onclick = () => act("/pay", { scenario: $("scenario").value });
+$("join").onclick = () => act("/waitlist/join");
+$("leave").onclick = () => act("/waitlist/leave");
+$("uid").oninput = poll;
+
+$("reset").onclick = async () => {
+  const p = new URLSearchParams({ total_stock: $("rs").value, hold_seconds: $("rh").value });
+  try {
+    const r = await fetch("/admin/reset?" + p, { method: "POST" });
+    $("msg").textContent = `POST /admin/reset -> HTTP ${r.status}` +
+      (r.status === 404 ? " (ENABLE_ADMIN is off)" : "");
+  } catch (e) {
+    $("msg").textContent = "reset failed: " + e.message;
+  }
+  poll();
+};
+
+setInterval(poll, 1000);    // server state
+setInterval(render, 250);   // smooth local countdown
+poll();
+</script>
+</body>
+</html>

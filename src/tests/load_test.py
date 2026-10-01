@@ -38,7 +38,14 @@ async def status(client, uid):
 
 
 async def reset(client, **params):
-    (await client.post("/admin/reset", params=params)).raise_for_status()
+    for attempt in range(3):
+        try:
+            (await client.post("/admin/reset", params=params)).raise_for_status()
+            return
+        except httpx.TransportError:
+            if attempt == 2:
+                raise
+            await asyncio.sleep(0.3)
 
 
 async def main(n):
@@ -100,7 +107,7 @@ async def main(n):
         print("[C]", "PASS" if c_ok else "FAIL")
         ok = ok and c_ok
 
-        await reset(c)  # back to 20 pairs / 300s
+        await reset(c, stock=20)  # back to 20 pairs / 300s
         sys.exit(0 if ok else 1)
 
 

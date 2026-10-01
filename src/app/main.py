@@ -5,14 +5,16 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 
 from app.db import pool
 from app.services.buy import buy
 from app.services.inventory import lock_config, stock_snapshot
+from app.services.audit import audit
 from app.services.payments import (
     KNOWN_TYPES, handle_webhook, list_refunds, payment_debug,
     start_payment, submit_to_provider,
@@ -39,6 +41,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Sneaker Drop", lifespan=lifespan)
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    return FileResponse(STATIC_DIR / "index.html")
 
 BUY_STATUS = {
     "HELD": 201, "UNKNOWN_USER": 404, "ALREADY_HOLDING": 409,
@@ -117,6 +125,7 @@ async def payment_webhook(request: Request):
     if not _valid(evt):
         raise HTTPException(status_code=400, detail="malformed event")
     result = await run_in_threadpool(handle_webhook, evt)
+    logging.getLogger("webhook").info("%s %s -> %s", evt["type"], evt["event_id"], result["outcome"])
     # 2xx for everything we understood (duplicates, stale, late...) so the provider
     # stops retrying. 404 for an unknown payment. A crash becomes 500 => provider retries.
     return JSONResponse(
@@ -169,3 +178,9 @@ def admin_payment(payment_id: str):
 def admin_refunds():
     _require_admin()
     return list_refunds()
+
+
+@app.get("/admin/audit")
+def admin_audit(stats: int = 0):
+    _require_admin()
+    return audit(bool(stats))
